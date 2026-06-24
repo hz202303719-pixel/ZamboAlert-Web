@@ -177,35 +177,64 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="app.js"></script>
     <script>
-      document.getElementById('call-btn').addEventListener('click', () => {
-        document.getElementById('call-modal').style.display = 'flex';
-      });
+      (function() {
+        var callBtn = document.getElementById('call-btn');
+        var callModal = document.getElementById('call-modal');
 
-      function closeCallModal() {
-        document.getElementById('call-modal').style.display = 'none';
-      }
+        if (callBtn && callModal) {
+          callBtn.addEventListener('click', function() {
+            callModal.style.display = 'flex';
+          });
+        } else {
+          console.warn('[ZamboAlert] call-btn or call-modal not found; call feature disabled.');
+        }
 
-      function makeCall(department) {
-        alert(`Initiating call to ${department}...`);
-        // In production, integrate with VoIP service
-        closeCallModal();
-      }
+        window.closeCallModal = function() {
+          if (callModal) callModal.style.display = 'none';
+        };
 
-      function closeAlertModal() {
-        document.getElementById('alert-modal').style.display = 'none';
-      }
+        window.makeCall = function(department) {
+          if (!department) {
+            console.error('[ZamboAlert] makeCall requires a department argument.');
+            return;
+          }
+          alert('Initiating call to ' + department + '...');
+          window.closeCallModal();
+        };
 
-      document.getElementById('create-alert-btn').addEventListener('click', () => {
-        document.getElementById('alert-modal').style.display = 'flex';
-      });
+        window.closeAlertModal = function() {
+          var modal = document.getElementById('alert-modal');
+          if (modal) modal.style.display = 'none';
+        };
 
-      document.getElementById('submit-alert-btn').addEventListener('click', () => {
-        const type = document.getElementById('alert-type').value;
-        const location = document.getElementById('alert-location').value;
-        const user = document.getElementById('alert-user').value.trim() || 'Community Member';
-        window.alertSystem.addAlert(type, location, user);
-        closeAlertModal();
-      });
+        var createAlertBtn = document.getElementById('create-alert-btn');
+        if (createAlertBtn) {
+          createAlertBtn.addEventListener('click', function() {
+            var modal = document.getElementById('alert-modal');
+            if (modal) modal.style.display = 'flex';
+          });
+        }
+
+        var submitAlertBtn = document.getElementById('submit-alert-btn');
+        if (submitAlertBtn) {
+          submitAlertBtn.addEventListener('click', function() {
+            var typeEl = document.getElementById('alert-type');
+            var locationEl = document.getElementById('alert-location');
+            var userEl = document.getElementById('alert-user');
+            if (!typeEl || !locationEl) {
+              console.error('[ZamboAlert] Alert form elements missing; cannot submit.');
+              return;
+            }
+            var user = (userEl && userEl.value.trim()) || 'Community Member';
+            if (window.alertSystem) {
+              window.alertSystem.addAlert(typeEl.value, locationEl.value, user);
+            } else {
+              console.error('[ZamboAlert] alertSystem not initialized; cannot create alert.');
+            }
+            window.closeAlertModal();
+          });
+        }
+      })();
     </script>
   </body>
 </html>

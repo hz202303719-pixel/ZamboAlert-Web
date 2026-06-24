@@ -13,17 +13,27 @@ document.addEventListener('DOMContentLoaded', function(){
 
   function initMap(containerId, lat=defaultLat, lng=defaultLng){
     const el = document.getElementById(containerId);
-    if(!el) return null;
+    if(!el) {
+      console.error(`[ZamboAlert] Map container element '#${containerId}' not found in DOM.`);
+      return null;
+    }
     const placeholder = el.querySelector('.map-placeholder');
     if(placeholder) placeholder.style.display = 'none';
 
-    const map = L.map(containerId, {zoomControl:true, attributionControl:false}).setView([lat,lng], 14);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19}).addTo(map);
-
-    return {map, markers: []};
+    try {
+      const map = L.map(containerId, {zoomControl:true, attributionControl:false}).setView([lat,lng], 14);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19}).addTo(map);
+      return {map, markers: []};
+    } catch (err) {
+      console.error(`[ZamboAlert] Failed to initialize map for '#${containerId}':`, err);
+      return null;
+    }
   }
 
   const dashboardMap = initMap('tumaga-map');
+  if (!dashboardMap) {
+    console.warn('[ZamboAlert] Dashboard map unavailable. Map-dependent features will be disabled.');
+  }
 
   let selectedAlertId = null;
 
@@ -32,7 +42,14 @@ document.addEventListener('DOMContentLoaded', function(){
   }
 
   function clearMapMarkers() {
-    dashboardMap.markers.forEach(({marker}) => dashboardMap.map.removeLayer(marker));
+    if (!dashboardMap) return;
+    dashboardMap.markers.forEach(({marker}) => {
+      try {
+        dashboardMap.map.removeLayer(marker);
+      } catch (err) {
+        console.warn('[ZamboAlert] Failed to remove map marker:', err);
+      }
+    });
     dashboardMap.markers.length = 0;
   }
 
@@ -70,21 +87,32 @@ document.addEventListener('DOMContentLoaded', function(){
 
   function selectAlert(alertId) {
     const selected = alertSystem.alerts.find(alert => alert.id === alertId);
-    if(!selected) return;
+    if(!selected) {
+      console.warn(`[ZamboAlert] Alert '${alertId}' not found.`);
+      return;
+    }
     selectedAlertId = alertId;
     const loc = getAlertLocation(selected);
-    dashboardMap.map.panTo([loc.lat, loc.lng]);
+    if (dashboardMap) {
+      dashboardMap.map.panTo([loc.lat, loc.lng]);
+    }
     renderMapMarkers(alertId);
-    document.getElementById('active-user-name').textContent = selected.reportedBy;
-    document.getElementById('active-user-status').textContent = selected.status;
-    document.getElementById('active-sos-details').innerHTML = `
-      <strong>Alert ID:</strong> ${selected.id}<br>
-      <strong>Type:</strong> ${selected.type}<br>
-      <strong>Location:</strong> ${selected.location}<br>
-      <strong>Respondent:</strong> ${selected.respondent.name} (${selected.respondent.role})<br>
-      <strong>Reported At:</strong> ${formatTime(selected.timestamp)}<br>
-      <strong>Barangay:</strong> Tumaga
-    `;
+
+    const nameEl = document.getElementById('active-user-name');
+    const statusEl = document.getElementById('active-user-status');
+    const detailsEl = document.getElementById('active-sos-details');
+    if (nameEl) nameEl.textContent = selected.reportedBy;
+    if (statusEl) statusEl.textContent = selected.status;
+    if (detailsEl) {
+      detailsEl.innerHTML = `
+        <strong>Alert ID:</strong> ${selected.id}<br>
+        <strong>Type:</strong> ${selected.type}<br>
+        <strong>Location:</strong> ${selected.location}<br>
+        <strong>Respondent:</strong> ${selected.respondent.name} (${selected.respondent.role})<br>
+        <strong>Reported At:</strong> ${formatTime(selected.timestamp)}<br>
+        <strong>Barangay:</strong> Tumaga
+      `;
+    }
   }
 
   window.selectAlert = selectAlert;
@@ -106,6 +134,10 @@ document.addEventListener('DOMContentLoaded', function(){
       {id: '#A100', type: 'Accident', location: 'Highway 7', status: 'Resolved', timestamp: new Date(Date.now() - 7200000), reportedBy: 'Traffic Watch', respondent: {name: 'Supervisor', role: 'Supervisor', location: 'Zone 1'}}
     ],
     addAlert: function(type, location, reportedBy) {
+      if (!type || !location) {
+        console.error('[ZamboAlert] Cannot create alert: type and location are required.');
+        return null;
+      }
       const respondent = this.users.find(u => u.online && u.location === location) || {name: 'Nearby responder', role: 'Responder', location};
       const newAlert = {
         id: '#A' + Math.floor(100 + Math.random() * 900),
@@ -113,7 +145,7 @@ document.addEventListener('DOMContentLoaded', function(){
         location,
         status: 'Active',
         timestamp: new Date(),
-        reportedBy,
+        reportedBy: reportedBy || 'Unknown',
         respondent
       };
       this.alerts.unshift(newAlert);
@@ -126,19 +158,25 @@ document.addEventListener('DOMContentLoaded', function(){
     },
     resolveAlert: function(alertId) {
       const alert = this.alerts.find(a => a.id === alertId);
-      if(alert) {
-        alert.status = 'Resolved';
-        updateSummary();
-        renderAlerts();
-        renderMapMarkers(selectedAlertId);
+      if(!alert) {
+        console.warn(`[ZamboAlert] Cannot resolve: alert '${alertId}' not found.`);
+        return;
       }
+      alert.status = 'Resolved';
+      updateSummary();
+      renderAlerts();
+      renderMapMarkers(selectedAlertId);
     },
     showNotification: function(type, location) {
       const msg = `New ${type} alert in ${location}`;
       if('Notification' in window && Notification.permission === 'granted') {
-        new Notification('ZamboAlert', {body: msg, icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23dc2626"><polygon points="12,2 20,20 4,20"/></svg>'});
+        try {
+          new Notification('ZamboAlert', {body: msg, icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23dc2626"><polygon points="12,2 20,20 4,20"/></svg>'});
+        } catch (err) {
+          console.warn('[ZamboAlert] Browser notification failed:', err);
+        }
       }
-      console.log('Alert:', msg);
+      console.log('[ZamboAlert] Alert:', msg);
     }
   };
 
@@ -149,21 +187,29 @@ document.addEventListener('DOMContentLoaded', function(){
   function updateSummary() {
     const activeCount = alertSystem.alerts.filter(alert => alert.status === 'Active').length;
     const resolvedCount = alertSystem.alerts.filter(alert => alert.status === 'Resolved').length;
-    const totalAlerts = alertSystem.alerts.length;
     const avgMs = alertSystem.alerts.reduce((sum, alert) => {
       const delta = alert.status === 'Resolved' ? Date.now() - alert.timestamp.getTime() : 0;
       return sum + delta;
     }, 0);
     const avgMinutes = resolvedCount ? Math.round((avgMs / resolvedCount) / 60000) : 0;
 
-    document.getElementById('active-alerts-count').textContent = activeCount;
-    document.getElementById('resolved-count').textContent = resolvedCount;
-    document.getElementById('avg-response').textContent = `${avgMinutes}m`;
-    document.getElementById('users-count').textContent = alertSystem.users.length;
+    const activeEl = document.getElementById('active-alerts-count');
+    const resolvedEl = document.getElementById('resolved-count');
+    const avgEl = document.getElementById('avg-response');
+    const usersEl = document.getElementById('users-count');
+
+    if (activeEl) activeEl.textContent = activeCount;
+    if (resolvedEl) resolvedEl.textContent = resolvedCount;
+    if (avgEl) avgEl.textContent = `${avgMinutes}m`;
+    if (usersEl) usersEl.textContent = alertSystem.users.length;
   }
 
   function renderAlerts() {
     const tbody = document.querySelector('#alerts-table tbody');
+    if (!tbody) {
+      console.warn('[ZamboAlert] Alerts table body not found; skipping render.');
+      return;
+    }
     tbody.innerHTML = alertSystem.alerts.map(alert => {
       return `
         <tr data-alert-id="${alert.id}">
@@ -186,6 +232,10 @@ document.addEventListener('DOMContentLoaded', function(){
 
   function renderRespondents() {
     const tbody = document.querySelector('#respondents-table tbody');
+    if (!tbody) {
+      console.warn('[ZamboAlert] Respondents table body not found; skipping render.');
+      return;
+    }
     tbody.innerHTML = alertSystem.users.map(user => {
       return `
         <tr>
@@ -201,6 +251,7 @@ document.addEventListener('DOMContentLoaded', function(){
 
   function renderLocationOptions() {
     const select = document.getElementById('alert-location');
+    if (!select) return;
     select.innerHTML = getLocationOptions();
   }
 
@@ -211,7 +262,9 @@ document.addEventListener('DOMContentLoaded', function(){
   updateSummary();
 
   if('Notification' in window && Notification.permission === 'default') {
-    Notification.requestPermission();
+    Notification.requestPermission().catch(function(err) {
+      console.warn('[ZamboAlert] Notification permission request failed:', err);
+    });
   }
 
   window.alertSystem = alertSystem;
@@ -227,20 +280,33 @@ document.addEventListener('DOMContentLoaded', function(){
   };
 
   window.closeAlertModal = function() {
-    document.getElementById('alert-modal').style.display = 'none';
+    const modal = document.getElementById('alert-modal');
+    if (modal) modal.style.display = 'none';
   };
 
-  document.getElementById('create-alert-btn').addEventListener('click', () => {
-    document.getElementById('alert-modal').style.display = 'flex';
-  });
+  const createAlertBtn = document.getElementById('create-alert-btn');
+  if (createAlertBtn) {
+    createAlertBtn.addEventListener('click', () => {
+      const modal = document.getElementById('alert-modal');
+      if (modal) modal.style.display = 'flex';
+    });
+  }
 
-  document.getElementById('submit-alert-btn').addEventListener('click', () => {
-    const type = document.getElementById('alert-type').value;
-    const location = document.getElementById('alert-location').value;
-    const user = document.getElementById('alert-user').value.trim() || 'Community Member';
-    window.alertSystem.addAlert(type, location, user);
-    window.closeAlertModal();
-  });
+  const submitAlertBtn = document.getElementById('submit-alert-btn');
+  if (submitAlertBtn) {
+    submitAlertBtn.addEventListener('click', () => {
+      const type = document.getElementById('alert-type');
+      const location = document.getElementById('alert-location');
+      const userInput = document.getElementById('alert-user');
+      if (!type || !location) {
+        console.error('[ZamboAlert] Alert form elements not found.');
+        return;
+      }
+      const user = (userInput && userInput.value.trim()) || 'Community Member';
+      window.alertSystem.addAlert(type.value, location.value, user);
+      window.closeAlertModal();
+    });
+  }
 
 });
 
